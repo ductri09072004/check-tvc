@@ -25,6 +25,22 @@ def load_url(job_dir: str) -> str:
         return ""
 
 
+def load_metadata(job_dir: str) -> Dict[str, str]:
+    metadata_path = os.path.join(job_dir, "metadata.txt")
+    meta: Dict[str, str] = {}
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                meta[key.strip()] = value.strip()
+    except Exception:
+        pass
+    return meta
+
+
 def vector_hash(npy_path: str, round_decimals: int = 6) -> Tuple[str, Tuple[int, ...], str]:
     arr = np.load(npy_path)
     # Normalize dtype/precision for hashing stability
@@ -65,6 +81,10 @@ def dedupe_vectors(
         if not os.path.isfile(npy_path):
             continue
         url = load_url(job_dir)
+        meta = load_metadata(job_dir)
+        fid = meta.get("fid", "")
+        cid = meta.get("cid", "")
+        adid = meta.get("adid", "")
         job_id = os.path.basename(job_dir)
 
         if method == "hash":
@@ -74,10 +94,10 @@ def dedupe_vectors(
                 continue
             if vhash not in seen:
                 seen[vhash] = job_dir
-                unique_rows.append([url])
+                unique_rows.append([url, fid, cid, adid])
             else:
                 original_dir = seen[vhash]
-                duplicates.append([url, job_id, os.path.basename(original_dir)])
+                duplicates.append([url, fid, cid, adid, job_id, os.path.basename(original_dir), ""])
                 if delete:
                     try:
                         shutil.rmtree(job_dir)
@@ -101,7 +121,7 @@ def dedupe_vectors(
                     # duplicate of reps_dirs[max_idx]
                     is_duplicate = True
                     original_dir = reps_dirs[max_idx]
-                    duplicates.append([url, job_id, os.path.basename(original_dir), f"{max_sim_val:.6f}"])
+                    duplicates.append([url, fid, cid, adid, job_id, os.path.basename(original_dir), f"{max_sim_val:.6f}"])
                     if delete:
                         try:
                             shutil.rmtree(job_dir)
@@ -110,20 +130,20 @@ def dedupe_vectors(
             if not is_duplicate:
                 reps_vecs.append(v)
                 reps_dirs.append(job_dir)
-                unique_rows.append([url])
+                unique_rows.append([url, fid, cid, adid])
 
-    # Write unique URLs
+    # Write unique URLs with metadata
     os.makedirs(os.path.dirname(unique_csv) or ".", exist_ok=True)
     with open(unique_csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["decoded_url"])  # single column
+        writer.writerow(["tvc", "fid", "cid", "adid"])  # include metadata columns
         writer.writerows(unique_rows)
 
-    # Write duplicate report
+    # Write duplicate report with metadata
     os.makedirs(os.path.dirname(report_csv) or ".", exist_ok=True)
     with open(report_csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["duplicate_url", "job_id", "duplicate_of_job_id", "max_similarity"])  # add cosine for transparency
+        writer.writerow(["tvc", "fid", "cid", "adid", "job_id", "duplicate_of_job_id", "max_similarity"])  # add cosine for transparency
         writer.writerows(duplicates)
 
     return len(unique_rows), len(duplicates)
@@ -137,7 +157,7 @@ def main() -> None:
     parser.add_argument("--round", dest="round_decimals", type=int, default=6, help="Round decimals before hashing to merge near-identical vectors (default: 6)")
     parser.add_argument("--delete", action="store_true", help="Actually delete duplicate folders")
     parser.add_argument("--method", choices=["hash", "cosine"], default="cosine", help="Dedupe method: exact hash or cosine threshold (default: cosine)")
-    parser.add_argument("--cosine_thresh", type=float, default=0.995, help="Cosine similarity threshold for duplicates (default: 0.995)")
+    parser.add_argument("--cosine_thresh", type=float, default=0.9, help="Cosine similarity threshold for duplicates (default: 0.995)")
     args = parser.parse_args()
 
     unique_count, dup_count = dedupe_vectors(

@@ -81,7 +81,13 @@ def download_file(url: str, dest_path: str) -> tuple[str, Optional[str]]:
     # Try requests first, fallback to urllib
     try:
         import requests  # type: ignore
-        with requests.get(url, stream=True, timeout=60) as r:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+        }
+        with requests.get(url, headers=headers, stream=True, timeout=60, allow_redirects=True) as r:
             r.raise_for_status()
             # Detect media type from Content-Type
             content_type = r.headers.get('Content-Type', '').lower()
@@ -107,8 +113,12 @@ def download_file(url: str, dest_path: str) -> tuple[str, Optional[str]]:
 
     # Fallback urllib
     try:
-        from urllib.request import urlopen
-        with urlopen(url, timeout=60) as r, open(dest_path, "wb") as f:
+        from urllib.request import Request, urlopen
+        req = Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept": "*/*",
+        })
+        with urlopen(req, timeout=60) as r, open(dest_path, "wb") as f:
             while True:
                 chunk = r.read(8192)
                 if not chunk:

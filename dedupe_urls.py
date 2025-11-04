@@ -28,69 +28,58 @@ def normalize_url(u: str) -> str:
         return s
 
 
-def dedupe_file(input_path: str, output_path: str, report_path: str) -> tuple[int, int]:
+def find_duplicates(input_path: str) -> tuple[int, dict[str, list[str]]]:
     total = 0
-    kept = 0
-    seen = {}
-    duplicates = []  # list of duplicate url strings
+    buckets: dict[str, list[str]] = {}
 
     with open(input_path, "r", encoding="utf-8", newline="") as fin:
         reader = csv.reader(fin)
         rows = list(reader)
 
-    # detect header if present
+    # detect and skip header (expects first column to be a URL with header like tvc/url/decoded_url)
     start_idx = 0
-    header = None
     if rows:
         first = (rows[0][0] if rows[0] else "").strip().lower()
         if first in {"decoded_url", "url", "tvc", "links"}:
-            header = rows[0]
             start_idx = 1
 
-    uniques: list[list[str]] = []
-    index_map: dict[str, int] = {}
     for i in range(start_idx, len(rows)):
         total += 1
         cell = (rows[i][0] if rows[i] else "").strip()
+        if not cell:
+            continue
         norm = normalize_url(cell)
-        if norm not in seen:
-            seen[norm] = 1
-            index_map[norm] = i
-            uniques.append([norm])
-            kept += 1
-        else:
-            duplicates.append(norm)
+        buckets.setdefault(norm, []).append(cell)
 
-    # write uniques
-    with open(output_path, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.writer(fout)
-        writer.writerow(["decoded_url"])
-        writer.writerows(uniques)
-
-    # write report: single column of duplicate URLs only
-    with open(report_path, "w", encoding="utf-8", newline="") as frep:
-        writer = csv.writer(frep)
-        writer.writerow(["duplicate_url"])  # header as single column
-        for url in duplicates:
-            writer.writerow([url])
-
-    return kept, len(duplicates)
+    dup_map = {k: v for k, v in buckets.items() if len(v) > 1}
+    return total, dup_map
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Deduplicate URLs in a CSV and report removed duplicates")
-    parser.add_argument("--input", dest="input_path", default="url-tvc.decoded.csv", help="Input CSV path (default: url-tvc.decoded.csv)")
-    parser.add_argument("--output", dest="output_path", default="url-tvc.unique.csv", help="Output unique CSV path (default: url-tvc.unique.csv)")
-    parser.add_argument("--report", dest="report_path", default="url-tvc.duplicates.csv", help="Duplicates report CSV path (default: url-tvc.duplicates.csv)")
+    parser = argparse.ArgumentParser(description="Check and list duplicate URLs in a CSV (first column)")
+    parser.add_argument("--input", dest="input_path", default="unique_urls.csv", help="Input CSV path to check (default: unique_urls.csv)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input_path):
         print(f"Input file not found: {args.input_path}", file=sys.stderr)
         sys.exit(1)
 
-    kept, removed = dedupe_file(args.input_path, args.output_path, args.report_path)
-    print(f"Kept {kept} unique URL(s), removed {removed} duplicate(s).")
-    print(f"→ Unique: {args.output_path}\n→ Report: {args.report_path}")
+    total, dup_map = find_duplicates(args.input_path)
+    if not dup_map:
+        print(f"No duplicates found. Checked {total} row(s).")
+        return
+
+    dup_keys = len(dup_map)
+    dup_rows = sum(len(v) for v in dup_map.values())
+    print(f"Found {dup_keys} duplicate URL key(s), {dup_rows} duplicated row(s), out of {total} row(s).")
+    print()
+    for norm, originals in sorted(dup_map.items(), key=lambda x: -len(x[1])):
+        print(f"Count {len(originals)} -> {norm}")
+        # show up to first 3 originals for visibility
+        for o in originals[:3]:
+            print(f"  - {o}")
+        if len(originals) > 3:
+            print(f"  ... and {len(originals) - 3} more")
 
 
 if __name__ == "__main__":
